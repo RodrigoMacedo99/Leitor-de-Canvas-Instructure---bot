@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pre-commit-check.sh",
+            "timeout": 30,
+            "statusMessage": "Checando branch e sincronismo com origin antes do commit..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/post-edit-lint.sh",
+            "timeout": 30,
+            "statusMessage": "Rodando ESLint no arquivo editado..."
+          }
+        ]
+      }
+    ]
+  }
+}

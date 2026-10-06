@@ -1,0 +1,32 @@
+# Dependências
+node_modules/
+frontend/dist/
+backend/coverage/
+
+# Ambiente e segredos
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Uploads locais (o volume Docker já persiste isso fora do git)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Scripts/dumps locais de bootstrap — nunca commitar SQL com dado ou hash
+# real (lição de um incidente: um _bootstrap_usuario_local.sql com senha em
+# comentário quase foi commitado sem querer). Prefixo "_" = "não versionar".
+docs/_*.sql
+docs/_*.local.*
+
+# Editores e SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Worktrees de agentes (isolamento de sessão do Claude Code)
+.claude/worktrees/
