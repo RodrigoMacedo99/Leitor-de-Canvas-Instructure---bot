@@ -1,0 +1,10 @@
+{
+  // Gate de segurança do CI (substitui "npm audit --audit-level=high" puro).
+  // Falha em QUALQUER vulnerabilidade alta/crítica nova — allowlist só para
+  // casos já investigados e documentados como sem correção segura disponível
+  // no momento. Cada entrada precisa de um comentário explicando o motivo
+  // (dependência, por que não dá pra atualizar, e o risco real residual).
+  "high": true,
+  "critical": true,
+  "allowlist": []
+}
