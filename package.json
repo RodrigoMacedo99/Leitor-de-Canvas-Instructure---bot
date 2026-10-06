@@ -1,0 +1,25 @@
+{
+  "name": "app-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "prepare": "husky",
+    "docker:up": "docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.override.yml up -d",
+    "docker:down": "docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.override.yml down",
+    "docker:logs": "docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.override.yml logs -f",
+    "docker:test": "docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.override.yml exec backend npm test",
+    "docker:prod": "docker compose --env-file .env.prod -f infra/docker/docker-compose.prod.yml up -d",
+    "lint:backend": "cd backend && npm run lint",
+    "lint:frontend": "cd frontend && npm run lint",
+    "format:backend": "cd backend && npm run format",
+    "format:frontend": "cd frontend && npm run format",
+    "test:backend": "cd backend && npm test",
+    "test:frontend": "cd frontend && npm test",
+    "audit:backend": "cd backend && npm run audit",
+    "audit:frontend": "cd frontend && npm run audit",
+    "audit": "npm run audit:backend && npm run audit:frontend"
+  },
+  "devDependencies": {
+    "husky": "^9.0.11"
+  }
+}

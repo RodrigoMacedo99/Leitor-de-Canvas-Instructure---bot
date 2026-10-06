@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pre-push — espelha localmente o job "Security Audit" do CI (audit-ci com
+# allowlist, backend + frontend). Vulnerabilidades de dependência podem
+# surgir a qualquer momento (CVE nova publicada), não só quando o código
+# muda — por isso esse gate roda no push, sempre, e não fica preso ao diff
+# staged como o scanner de segredos do pre-commit.
+set -e
+
+echo "🔐 Auditoria de dependências (audit-ci) — backend..."
+(cd backend && npm run --silent audit)
+
+if [ -d frontend/node_modules ]; then
+  echo "🔐 Auditoria de dependências (audit-ci) — frontend..."
+  (cd frontend && npm run --silent audit)
+else
+  echo "⚠️  frontend/node_modules ausente — rode 'cd frontend && npm install' para habilitar essa checagem."
+fi
+
+echo "✅ Pre-push OK — nenhuma vulnerabilidade alta/crítica nova (igual ao gate do CI)."
