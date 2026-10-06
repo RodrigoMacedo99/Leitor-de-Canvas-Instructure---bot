@@ -1,0 +1,94 @@
+#!/bin/sh
+# Pre-commit — espelha localmente os gates do CI, na ordem:
+#   1. Segurança    — scanner de segredos/chaves (bloqueia se achar)
+#   2. Cobertura    — toda mudança de código precisa vir com teste (bloqueia se não)
+#   3. Formatação   — Prettier ajusta espaços, quebras de linha e estilo
+#   4. Limpeza      — Prettier também remove espaços em branco no fim das linhas
+#   5. Lint         — ESLint procura erros de sintaxe e variáveis não usadas
+#   6. Testes       — Jest/Vitest roda a suíte do backend/frontend quando muda
+# Só roda as etapas pesadas (format/lint/test) quando há código staged do
+# módulo correspondente, para não penalizar commits só de docs/infra.
+set -e
+
+echo "🔒 [1/6] Segurança — procurando segredos/chaves nos arquivos staged..."
+node scripts/security-scan.js
+
+# Merge commit: o conteudo de cada lado ja passou pelo pre-commit no commit
+# original (na propria branch/PR); reexigir par teste+codigo aqui bloquearia
+# merges legitimos so porque o merge inteiro nao teve exatamente 1 arquivo
+# de teste por arquivo de codigo staged simultaneamente.
+if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+  echo "🔀 Merge commit detectado -- pulando checagem de cobertura [2/6]."
+  echo "✅ Pre-commit OK (merge)."
+  exit 0
+fi
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+BACKEND_JS=$(printf '%s\n' "$STAGED" | grep -E '^backend/(src|tests)/.*\.js$' || true)
+FRONTEND_JS=$(printf '%s\n' "$STAGED" | grep -E '^frontend/src/.*\.(js|jsx)$' || true)
+
+# Código de produção vs. arquivos de teste, dentro do que já está staged.
+BACKEND_SRC=$(printf '%s\n' "$BACKEND_JS" | grep -E '^backend/src/' || true)
+BACKEND_TESTS=$(printf '%s\n' "$BACKEND_JS" | grep -E '^backend/tests/' || true)
+FRONTEND_SRC=$(printf '%s\n' "$FRONTEND_JS" | grep -vE '\.test\.jsx?$' || true)
+FRONTEND_TESTS=$(printf '%s\n' "$FRONTEND_JS" | grep -E '\.test\.jsx?$' || true)
+
+echo "🧪 [2/6] Cobertura de testes — toda mudança de código precisa vir com teste..."
+TEST_FAIL=0
+
+# Backend: se a convenção do seu projeto não for 1:1 arquivo-por-arquivo,
+# ajuste esta checagem para "geral" (algum teste em backend/tests/ staged),
+# como no comentário abaixo.
+if [ -n "$BACKEND_SRC" ] && [ -z "$BACKEND_TESTS" ]; then
+  echo "  ❌ Código do backend staged sem nenhum teste em backend/tests/ staged junto:"
+  printf '     %s\n' $BACKEND_SRC
+  TEST_FAIL=1
+fi
+
+# Frontend: convenção 1:1 (Componente.jsx -> Componente.test.jsx no mesmo
+# diretório), então a checagem é exata por arquivo.
+if [ -n "$FRONTEND_SRC" ]; then
+  for f in $FRONTEND_SRC; do
+    base="${f%.jsx}"
+    base="${base%.js}"
+    if ! printf '%s\n' "$FRONTEND_TESTS" | grep -qxF "${base}.test.jsx" &&
+      ! printf '%s\n' "$FRONTEND_TESTS" | grep -qxF "${base}.test.js"; then
+      echo "  ❌ $f staged sem o teste correspondente (${base}.test.jsx) staged junto."
+      TEST_FAIL=1
+    fi
+  done
+fi
+
+if [ "$TEST_FAIL" -eq 1 ]; then
+  echo ""
+  echo "  Crie ou atualize o(s) teste(s) correspondente(s) e rode 'git add' neles antes de commitar."
+  echo "  Escape excepcional (evite usar): git commit --no-verify"
+  exit 1
+fi
+
+if [ -n "$BACKEND_JS" ]; then
+  echo "🎨 [3/6] Formatação + [4/6] limpeza (Prettier) — backend..."
+  (cd backend && npm run --silent format)
+  printf '%s\n' "$BACKEND_JS" | xargs git add
+  echo "🔍 [5/6] Lint (ESLint) — backend..."
+  (cd backend && npm run --silent lint)
+fi
+
+if [ -n "$FRONTEND_JS" ]; then
+  if [ -d frontend/node_modules ]; then
+    echo "🎨 [3/6] Formatação + [4/6] limpeza (Prettier) — frontend..."
+    (cd frontend && npm run --silent format)
+    printf '%s\n' "$FRONTEND_JS" | xargs git add
+    echo "🔍 [5/6] Lint (ESLint) — frontend..."
+    (cd frontend && npm run --silent lint)
+  else
+    echo "⚠️  frontend/node_modules ausente — rode 'cd frontend && npm install' para habilitar as checagens do frontend."
+  fi
+fi
+
+if [ -n "$BACKEND_JS" ]; then
+  echo "🧪 [6/6] Testes (Jest) — backend..."
+  (cd backend && npm test)
+fi
+
+echo "✅ Pre-commit OK."

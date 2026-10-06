@@ -1,0 +1,56 @@
+# Compose de produção — usa as imagens já publicadas no GHCR pelo pipeline
+# de CD (.github/workflows/cd.yml), em vez de buildar localmente. Pensado
+# pra rodar direto no servidor, num diretório que só tenha este arquivo e
+# um .env com os segredos reais.
+name: app
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-app}
+      POSTGRES_USER: ${DB_USER:-app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-app}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ghcr.io/OWNER/REPO/backend:${IMAGE_TAG:-main}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${DB_USER:-app}:${DB_PASSWORD}@db:5432/${DB_NAME:-app}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+    depends_on:
+      db:
+        condition: service_healthy
+    # Só localhost — nunca exponha o backend direto pra internet. O reverse
+    # proxy real (nginx/Caddy) fica no host, fora deste compose, e termina
+    # TLS antes de repassar pra cá. Documente/audite essa config fora do
+    # repo em infra/nginx/ (ver README) — não deixe como "conhecimento
+    # tribal" só na cabeça de quem configurou o servidor.
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-3001}:3001"
+    volumes:
+      - uploads:/app/uploads
+
+  frontend:
+    image: ghcr.io/OWNER/REPO/frontend:${IMAGE_TAG:-main}
+    restart: unless-stopped
+    ports:
+      - "${PROD_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  uploads:
