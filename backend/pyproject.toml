@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cbot-backend"
+version = "0.1.0"
+description = "CBOT - assistente de cursos do Canvas (Instructure) via WhatsApp/Telegram, com RAG"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30",
+    "pydantic[email]>=2.8",
+    "pydantic-settings>=2.4",
+    "sqlalchemy>=2.0.30",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.13",
+    "httpx>=0.27",
+    "tenacity>=8.5",
+    "cryptography>=43",
+    "PyJWT>=2.9",
+    "bcrypt>=4.2",
+    "anthropic>=0.40",
+    "apscheduler>=3.10,<4",
+    "pypdf>=5.0",
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.2",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "respx>=0.21",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pip-audit>=2.7",
+    "pgserver>=0.1.4",
+    "types-beautifulsoup4",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "S", "C4", "PL"]
+ignore = ["E501", "S101", "PLR2004", "PLR0913", "PLR0917", "PLC0415", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S608", "PLR0915", "E501", "C408"]
+"src/cbot/modules/*/infrastructure/sql_*.py" = ["S608"]  # colunas/filtros são constantes; valores sempre parametrizados
+"migrations/**" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+markers = ["integration: precisa de PostgreSQL real com pgvector (DATABASE_URL)"]
+
+[tool.coverage.run]
+source = ["src/cbot"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

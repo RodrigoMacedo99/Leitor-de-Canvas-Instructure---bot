@@ -2,10 +2,10 @@
 # Pre-commit — espelha localmente os gates do CI, na ordem:
 #   1. Segurança    — scanner de segredos/chaves (bloqueia se achar)
 #   2. Cobertura    — toda mudança de código precisa vir com teste (bloqueia se não)
-#   3. Formatação   — Prettier ajusta espaços, quebras de linha e estilo
-#   4. Limpeza      — Prettier também remove espaços em branco no fim das linhas
-#   5. Lint         — ESLint procura erros de sintaxe e variáveis não usadas
-#   6. Testes       — Jest/Vitest roda a suíte do backend/frontend quando muda
+#   3. Formatação   — ruff format (backend Python) / Prettier (frontend)
+#   4. Limpeza      — ambos removem espaços em branco no fim das linhas
+#   5. Lint         — ruff + mypy --strict (backend) / ESLint (frontend)
+#   6. Testes       — pytest (unitários; os de integração rodam no CI) / Vitest
 # Só roda as etapas pesadas (format/lint/test) quando há código staged do
 # módulo correspondente, para não penalizar commits só de docs/infra.
 set -e
@@ -24,21 +24,19 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
 fi
 
 STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
-BACKEND_JS=$(printf '%s\n' "$STAGED" | grep -E '^backend/(src|tests)/.*\.js$' || true)
+BACKEND_PY=$(printf '%s\n' "$STAGED" | grep -E '^backend/(src|tests|migrations)/.*\.py$' || true)
 FRONTEND_JS=$(printf '%s\n' "$STAGED" | grep -E '^frontend/src/.*\.(js|jsx)$' || true)
 
 # Código de produção vs. arquivos de teste, dentro do que já está staged.
-BACKEND_SRC=$(printf '%s\n' "$BACKEND_JS" | grep -E '^backend/src/' || true)
-BACKEND_TESTS=$(printf '%s\n' "$BACKEND_JS" | grep -E '^backend/tests/' || true)
+BACKEND_SRC=$(printf '%s\n' "$BACKEND_PY" | grep -E '^backend/src/' || true)
+BACKEND_TESTS=$(printf '%s\n' "$BACKEND_PY" | grep -E '^backend/tests/' || true)
 FRONTEND_SRC=$(printf '%s\n' "$FRONTEND_JS" | grep -vE '\.test\.jsx?$' || true)
 FRONTEND_TESTS=$(printf '%s\n' "$FRONTEND_JS" | grep -E '\.test\.jsx?$' || true)
 
 echo "🧪 [2/6] Cobertura de testes — toda mudança de código precisa vir com teste..."
 TEST_FAIL=0
 
-# Backend: se a convenção do seu projeto não for 1:1 arquivo-por-arquivo,
-# ajuste esta checagem para "geral" (algum teste em backend/tests/ staged),
-# como no comentário abaixo.
+# Backend: convenção "geral" — mudança em backend/src exige algum teste em backend/tests/ staged.
 if [ -n "$BACKEND_SRC" ] && [ -z "$BACKEND_TESTS" ]; then
   echo "  ❌ Código do backend staged sem nenhum teste em backend/tests/ staged junto:"
   printf '     %s\n' $BACKEND_SRC
@@ -66,12 +64,18 @@ if [ "$TEST_FAIL" -eq 1 ]; then
   exit 1
 fi
 
-if [ -n "$BACKEND_JS" ]; then
-  echo "🎨 [3/6] Formatação + [4/6] limpeza (Prettier) — backend..."
-  (cd backend && npm run --silent format)
-  printf '%s\n' "$BACKEND_JS" | xargs git add
-  echo "🔍 [5/6] Lint (ESLint) — backend..."
-  (cd backend && npm run --silent lint)
+# Interpretador do backend: o venv do projeto (backend/.venv), se existir; senão o python do PATH.
+PYB="$(cd backend && pwd)/.venv"
+if [ -x "$PYB/Scripts/python" ]; then PY="$PYB/Scripts/python"
+elif [ -x "$PYB/bin/python" ]; then PY="$PYB/bin/python"
+else PY=python; fi
+
+if [ -n "$BACKEND_PY" ]; then
+  echo "🎨 [3/6] Formatação + [4/6] limpeza (ruff format) — backend..."
+  (cd backend && "$PY" -m ruff format src tests migrations)
+  printf '%s\n' "$BACKEND_PY" | xargs git add
+  echo "🔍 [5/6] Lint (ruff) + tipos (mypy --strict) — backend..."
+  (cd backend && "$PY" -m ruff check src tests migrations && "$PY" -m mypy src)
 fi
 
 if [ -n "$FRONTEND_JS" ]; then
@@ -86,9 +90,14 @@ if [ -n "$FRONTEND_JS" ]; then
   fi
 fi
 
-if [ -n "$BACKEND_JS" ]; then
-  echo "🧪 [6/6] Testes (Jest) — backend..."
-  (cd backend && npm test)
+if [ -n "$BACKEND_PY" ]; then
+  echo "🧪 [6/6] Testes (pytest, unitários) — backend..."
+  (cd backend && "$PY" -m pytest tests/unit -q)
+fi
+
+if [ -n "$FRONTEND_JS" ] && [ -d frontend/node_modules ]; then
+  echo "🧪 [6/6] Testes (Vitest) — frontend..."
+  (cd frontend && npm test --silent)
 fi
 
 echo "✅ Pre-commit OK."

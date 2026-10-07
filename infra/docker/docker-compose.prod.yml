@@ -1,11 +1,11 @@
 # Compose de produção — usa as imagens já publicadas no GHCR pelo pipeline
 # de CD (.github/workflows/cd.yml), em vez de buildar localmente. Pensado
 # pra rodar direto no servidor, num diretório que só tenha este arquivo e
-# um .env com os segredos reais.
-name: app
+# um .env.prod com os segredos reais.
+name: cbot
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-app}
@@ -22,25 +22,46 @@ services:
   backend:
     image: ghcr.io/OWNER/REPO/backend:${IMAGE_TAG:-main}
     restart: unless-stopped
+    command: sh -c "alembic upgrade head && uvicorn cbot.main:create_app --factory --host 0.0.0.0 --port 3001"
+    env_file: ../../.env.prod
     environment:
-      NODE_ENV: production
-      PORT: 3001
+      APP_ENV: production
       DATABASE_URL: postgresql://${DB_USER:-app}:${DB_PASSWORD}@db:5432/${DB_NAME:-app}
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      STORAGE_DIR: /data/arquivos
       CORS_ORIGIN: ${CORS_ORIGIN}
     depends_on:
       db:
         condition: service_healthy
-    # Só localhost — nunca exponha o backend direto pra internet. O reverse
-    # proxy real (nginx/Caddy) fica no host, fora deste compose, e termina
-    # TLS antes de repassar pra cá. Documente/audite essa config fora do
-    # repo em infra/nginx/ (ver README) — não deixe como "conhecimento
-    # tribal" só na cabeça de quem configurou o servidor.
+    # Só localhost — nunca exponha o backend direto pra internet. O reverse proxy real
+    # (Caddy/nginx) fica no host, termina TLS e repassa pra cá; é o ÚNICO ponto público
+    # (webhooks do WhatsApp/Telegram entram por ele). Documente essa config em infra/.
     ports:
       - "127.0.0.1:${BACKEND_PORT:-3001}:3001"
     volumes:
-      - uploads:/app/uploads
+      - arquivos:/data/arquivos
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:3001/health', timeout=4)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    image: ghcr.io/OWNER/REPO/backend:${IMAGE_TAG:-main}
+    restart: unless-stopped
+    command: python -m cbot.worker
+    env_file: ../../.env.prod
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://${DB_USER:-app}:${DB_PASSWORD}@db:5432/${DB_NAME:-app}
+      STORAGE_DIR: /data/arquivos
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - arquivos:/data/arquivos
 
   frontend:
     image: ghcr.io/OWNER/REPO/frontend:${IMAGE_TAG:-main}
@@ -53,4 +74,4 @@ services:
 
 volumes:
   pgdata:
-  uploads:
+  arquivos:

@@ -64,7 +64,7 @@ const SECRET_PATTERNS = [
   { name: 'Conexão DB com senha', re: /postgresql?:\/\/[^:]+:[^@]{4,}@/, skipIf: /\$\{/ },
 ];
 
-const CHECKABLE_EXT = ['.js', '.jsx', '.ts', '.tsx', '.json', '.yml', '.yaml', '.env', '.sh'];
+const CHECKABLE_EXT = ['.js', '.jsx', '.ts', '.tsx', '.py', '.toml', '.json', '.yml', '.yaml', '.env', '.sh'];
 const ALLOW_LIST = ['.env.example', '.env.test'];
 
 console.log(`\n${BOLD}🔐 Scanner de Segurança${RESET}\n`);
@@ -113,6 +113,7 @@ const DANGEROUS_PATTERNS = [
 ];
 
 for (const file of arquivos) {
+  if (!CHECKABLE_EXT.includes(path.extname(file))) continue; // binários (docx, imagens) não são texto
   const isTest = file.includes('/tests/') || file.includes('.test.') || file.includes('.spec.');
   const isScript = file.startsWith('scripts/');
 
@@ -137,38 +138,10 @@ for (const file of arquivos) {
   }
 }
 
-// ── 4. npm audit (apenas backend — rápido) ─────────────────────────────────
-console.log('\nVerificando vulnerabilidades de dependências (npm audit)...');
-const backendDir = path.join(__dirname, '..', 'backend');
-if (fs.existsSync(path.join(backendDir, 'package.json'))) {
-  const audit = spawnSync('npm', ['audit', '--audit-level=high', '--json'], {
-    cwd: backendDir,
-    encoding: 'utf8',
-  });
-
-  if (audit.status !== 0) {
-    try {
-      const result = JSON.parse(audit.stdout);
-      const vulns = result.metadata?.vulnerabilities;
-      if (vulns) {
-        const critical = (vulns.critical || 0) + (vulns.high || 0);
-        if (critical > 0) {
-          error(
-            `npm audit: ${vulns.critical || 0} críticas, ${vulns.high || 0} altas — execute "cd backend && npm audit fix"`
-          );
-        } else {
-          warn(`npm audit: ${vulns.moderate || 0} moderadas, ${vulns.low || 0} baixas`);
-        }
-      }
-    } catch {
-      warn('npm audit retornou formato inesperado');
-    }
-  } else {
-    ok('npm audit — sem vulnerabilidades críticas');
-  }
-} else {
-  warn('backend/package.json não encontrado — pulei o npm audit.');
-}
+// ── 4. Dependências ────────────────────────────────────────────────────────
+// A auditoria de dependências (pip-audit no backend, audit-ci no frontend) roda no
+// pre-push e no job "Security Audit" do CI — aqui só os segredos e padrões perigosos.
+ok('Auditoria de dependências: executada no pre-push e no CI (pip-audit / audit-ci).');
 
 // ── 5. Resultado ───────────────────────────────────────────────────────────
 console.log('');

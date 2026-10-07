@@ -9,6 +9,11 @@ const proxyTarget = process.env.VITE_PROXY_TARGET || 'http://localhost:3001';
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./vitest.setup.js'],
+    css: false,
+  },
   server: {
     port: 5173,
     proxy: {
