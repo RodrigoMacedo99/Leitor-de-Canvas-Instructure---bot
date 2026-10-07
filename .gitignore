@@ -1,7 +1,20 @@
-# Dependências
+# Dependências e artefatos de build
 node_modules/
 frontend/dist/
 backend/coverage/
+backend/.venv/
+backend/*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+.test_run.log
+
+# Arquivos baixados do Canvas (dados pessoais do aluno — nunca versionar)
+backend/data/
 
 # Ambiente e segredos
 .env
@@ -11,10 +24,6 @@ backend/coverage/
 *.key
 *.p12
 *.pfx
-
-# Uploads locais (o volume Docker já persiste isso fora do git)
-backend/uploads/*
-!backend/uploads/.gitkeep
 
 # Scripts/dumps locais de bootstrap — nunca commitar SQL com dado ou hash
 # real (lição de um incidente: um _bootstrap_usuario_local.sql com senha em
@@ -30,3 +39,4 @@ Thumbs.db
 
 # Worktrees de agentes (isolamento de sessão do Claude Code)
 .claude/worktrees/
+*.egg-info/

@@ -7,17 +7,27 @@ services:
     build:
       context: ../../backend
       dockerfile: Dockerfile.dev
+    command: sh -c "alembic upgrade head && uvicorn cbot.main:create_app --factory --host 0.0.0.0 --port 3001 --reload --reload-dir src"
     environment:
-      NODE_ENV: development
+      APP_ENV: development
       DATABASE_URL: postgresql://${DB_USER:-app}:${DB_PASSWORD:-app_secret}@db:5432/${DB_NAME:-app}
-      # Sem isso cai no default "http://localhost" (sem porta) do docker-compose
-      # base — não bate com a origem real do Vite (localhost:5173), então o
-      # navegador bloqueia por CORS qualquer checagem de sessão após reload.
+      # Sem isso cai no default do compose base (sem porta) — não bate com a origem do Vite
+      # (localhost:5173) e o navegador bloqueia por CORS.
       CORS_ORIGIN: http://localhost:5173
     volumes:
       - ../../backend/src:/app/src
-      - uploads:/app/uploads
-    command: npm run dev
+      - arquivos:/data/arquivos
+
+  worker:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile.dev
+    command: python -m cbot.worker
+    environment:
+      APP_ENV: development
+    volumes:
+      - ../../backend/src:/app/src
+      - arquivos:/data/arquivos
 
   frontend:
     build: !reset null

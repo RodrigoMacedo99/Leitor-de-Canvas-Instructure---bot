@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# PostToolUse hook (Write|Edit) — lint rápido do arquivo .js/.jsx que acabou de
-# ser editado. Nunca bloqueia a edição (sempre sai 0): é só feedback imediato
-# devolvido ao contexto do Claude, pra pegar bug óbvio de sintaxe/lint antes
-# de rodar a suíte de testes inteira. Cada subprojeto (frontend/backend) tem
-# seu próprio eslint config, então a checagem roda isolada por pasta.
+# PostToolUse hook (Write|Edit) — lint rápido do arquivo que acabou de ser editado:
+#   - backend/**/*.py   -> ruff check (venv do projeto)
+#   - frontend/src/*.js(x) -> ESLint
+# Nunca bloqueia a edição (sempre sai 0): é só feedback imediato devolvido ao contexto do
+# Claude, pra pegar bug óbvio de sintaxe/lint antes de rodar a suíte de testes inteira.
 set -uo pipefail
 
 INPUT=$(cat)
@@ -21,11 +21,6 @@ process.stdin.on('end', () => {
 
 [ -z "$FILE" ] && exit 0
 
-case "$FILE" in
-  *.js|*.jsx) ;;
-  *) exit 0 ;;
-esac
-
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$REPO_ROOT" ] && exit 0
 
@@ -33,26 +28,35 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 NORM_FILE=$(echo "$FILE" | sed 's#\\#/#g')
 NORM_ROOT=$(echo "$REPO_ROOT" | sed 's#\\#/#g')
 
-case "$NORM_FILE" in
-  "$NORM_ROOT"/frontend/src/*) PROJECT_DIR="$REPO_ROOT/frontend" ;;
-  "$NORM_ROOT"/backend/src/*) PROJECT_DIR="$REPO_ROOT/backend" ;;
-  *) exit 0 ;;
-esac
-
-cd "$PROJECT_DIR" || exit 0
-
-LINT_OUTPUT=$(npx eslint "$FILE" 2>&1)
-LINT_EXIT=$?
-
-[ "$LINT_EXIT" -eq 0 ] && exit 0
-
-node -e "
+feedback() {
+  node -e "
 process.stdout.write(JSON.stringify({
   hookSpecificOutput: {
     hookEventName: 'PostToolUse',
-    additionalContext: 'ESLint encontrou problema(s) em ' + process.argv[1] + ':\n' + process.argv[2],
+    additionalContext: process.argv[1] + ' encontrou problema(s) em ' + process.argv[2] + ':\n' + process.argv[3],
   },
 }));
-" "$FILE" "$LINT_OUTPUT"
+" "$1" "$FILE" "$2"
+}
+
+case "$NORM_FILE" in
+  "$NORM_ROOT"/backend/*.py)
+    PYB="$REPO_ROOT/backend/.venv"
+    if [ -x "$PYB/Scripts/python" ]; then PY="$PYB/Scripts/python"
+    elif [ -x "$PYB/bin/python" ]; then PY="$PYB/bin/python"
+    else PY=python; fi
+    cd "$REPO_ROOT/backend" || exit 0
+    OUTPUT=$("$PY" -m ruff check "$FILE" 2>&1)
+    [ $? -eq 0 ] && exit 0
+    feedback "ruff" "$OUTPUT"
+    ;;
+  "$NORM_ROOT"/frontend/src/*.js|"$NORM_ROOT"/frontend/src/*.jsx)
+    cd "$REPO_ROOT/frontend" || exit 0
+    OUTPUT=$(npx eslint "$FILE" 2>&1)
+    [ $? -eq 0 ] && exit 0
+    feedback "ESLint" "$OUTPUT"
+    ;;
+  *) exit 0 ;;
+esac
 
 exit 0

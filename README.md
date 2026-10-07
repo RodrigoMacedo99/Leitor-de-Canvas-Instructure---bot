@@ -1,66 +1,111 @@
-# Template de Projeto — Monorepo Node.js/Express/Knex + React/Vite
+# CBOT — Leitor de Canvas (Instructure) + bot de WhatsApp/Telegram com RAG
 
-Esqueleto de **processo e qualidade**, extraído de um projeto em produção real. Não tem lógica de negócio nenhuma — é a camada de tooling (CI/CD, hooks, agentes, testes, segurança, Docker) que todo projeto novo, nesta stack, deveria começar já tendo.
+Assistente pessoal para alunos do **Canvas (Instructure)**. Com o **token do próprio aluno**, o sistema:
 
-## O que tem aqui
+1. **Sincroniza** os cursos em que ele está matriculado, como rotina (a cada 6 h por padrão): baixa arquivos,
+   lê páginas, tarefas, quizzes, avisos e o programa, e detecta o que é **novo, alterado ou removido**.
+2. **Resume** as novidades e os prazos próximos e envia por **WhatsApp** (Cloud API da Meta) ou **Telegram**.
+3. **Responde dúvidas** pelo mesmo canal com **RAG** (busca híbrida pgvector + texto, reranking, citação de
+   arquivo e página, recusa quando não há evidência no material).
+4. Tem um **painel web** (React) para conectar o Canvas, vincular canais, ver cursos/prazos e testar perguntas.
+
+> Documentação de arquitetura e decisões (ADRs) em [`docs/`](docs/): `arquitetura-CBOT-v0.1.0.docx` e
+> `docs/decisions/`.
+
+## Arquitetura em uma olhada
 
 ```
-.claude/
-  CLAUDE.md              Padrões de qualidade (código, testes, segurança, CI/CD, observabilidade)
-  agents/                14 agentes especializados (requisitos, qualidade, segurança, infra, orquestração)
-  skills/                8 skills reutilizáveis (TDD, testes, segurança, auth, CI/CD, API, performance)
-  hooks/                 Hooks do Claude Code: bloqueia commit direto em main/develop, lint pós-edição
-  settings.json          Liga os hooks acima
-
-.husky/                  Git hooks reais (rodam pra qualquer colaborador, com ou sem Claude Code)
-  pre-commit             Scanner de segredos + par teste/código + Prettier + ESLint + testes
-  pre-push               audit-ci (dependências vulneráveis) — backend e frontend
-  commit-msg             Conventional Commits
-
-.github/workflows/
-  ci.yml                 Lint, format, testes (Postgres real via service container), audit, scan de segredos
-  cd.yml                 Build + push de imagens Docker, deploy com gate de aprovação manual
-
-docs/
-  GITFLOW.md              Modelo de branching (main/develop/feature/release/hotfix)
-
-infra/docker/             docker-compose (dev com hot-reload, prod com imagens do GHCR)
-backend/                  package.json, ESLint/Prettier, audit-ci, knexfile.js, tests/setup.js
-frontend/                 package.json, ESLint/Prettier, audit-ci, vite.config.js, nginx.conf
-scripts/security-scan.js  Scanner de segredos hardcoded (usado no pre-commit e no CI)
+Aluno ──WhatsApp/Telegram──► webhook (HTTPS) ──► API FastAPI ──► PostgreSQL 16 + pgvector
+                                                      │                 ▲
+Canvas (API REST, token do aluno) ◄── Worker (APScheduler + fila SKIP LOCKED) ──► arquivos (volume, por aluno)
+                                                      │
+                                    Claude (chat/resumo) · Ollama bge-m3 (embeddings locais)
 ```
 
-**De propósito, não tem:** nenhuma rota, componente, model ou tela. `backend/src/` e `frontend/src/` começam vazios (só a config de banco e de build). Você cola o código do projeto novo em cima desta base.
+- **Backend Python 3.12** (`backend/`), monólito modular com DDD: `src/cbot/modules/<contexto>/{domain,application,infrastructure,interfaces}`.
+  Contextos: `alunos`, `canvas` (adaptador do LMS), `conteudo`, `sincronizacao`, `rag`, `chat`, `mensageria`, `resumo`.
+  Módulos só conversam por **eventos de domínio** ou pela `public.py` do outro módulo.
+- **Padrões usados:** Ports & Adapters (hexagonal), Repository, Unit of Work, Strategy + Registry (coletores do
+  Canvas, extratores de texto, chunker, reranker), Observer (barramento de eventos), Command e Chain of
+  Responsibility (comandos e pipeline de mensagens), Template Method (canais), Adapter, Factory, Facade, Null
+  Object (reranker/contextualizador desligados), Decorator (retry), injeção de dependência manual (`container.py`).
+- **PEPs/idioma moderno:** type hints estritos (`mypy --strict`), `Protocol` (PEP 544), `dataclass(slots=True)`,
+  `type` aliases e generics (PEP 695), `match` (PEP 634), `StrEnum`, context managers, `ruff` (PEP 8).
+- **Frontend** (`frontend/`): React 18 + Vite + React Router.
 
-## Como começar um projeto novo a partir daqui
+## Rodando com Docker
 
-1. Copie esta pasta inteira pro lugar do novo projeto e `git init`.
-2. Troque `app`/`app-backend`/`app-frontend`/`OWNER/REPO` pelos nomes reais — aparecem em: `package.json` (3 arquivos), `infra/docker/docker-compose*.yml`, `.env.example`.
-3. `cp .env.example .env` e preencha com valores reais (nunca commite o `.env`).
-4. `npm install` na raiz, depois em `backend/` e `frontend/`.
-5. `npm run prepare` na raiz (ativa os hooks do Husky).
-6. Preencha `backend/src/` (módulos DDD por Bounded Context — ver `backend/src/README.md`, migrations) e `frontend/src/` (páginas, componentes) com o código do projeto de verdade, seguindo os padrões de `.claude/CLAUDE.md`.
-7. `npm run docker:up` sobe tudo local (Postgres + backend com hot-reload + Vite).
-8. No GitHub: configure branch protection em `main`/`develop` (o hook local em `.claude/hooks/pre-commit-check.sh` cobre quem usa Claude Code, mas **não substitui** a proteção de verdade do lado do servidor) e, se for usar o `cd.yml`, configure o Environment `production` com **required reviewers** — veja a lição #3 abaixo sobre por que isso importa de verdade.
+```bash
+cp .env.example .env     # preencha JWT_SECRET, TOKEN_ENCRYPTION_KEY, DB_PASSWORD (+ canais/IA)
+npm run docker:up        # db (pgvector) + backend (migrations + API) + worker + frontend
+```
 
-## Lições de incidentes reais (por que isso está aqui do jeito que está)
+- Painel: http://localhost:5173 (dev) · API: http://localhost:3001 · Docs da API: http://localhost:3001/api/docs
+- Embeddings locais: `ollama pull bge-m3` (ou use `EMBEDDING_PROVIDER=hashing` só para experimentar).
 
-Este template não é teórico — cada um destes pontos já causou um problema de verdade no projeto de origem:
+## Rodando sem Docker (desenvolvimento)
 
-1. **`knexfile.js`: `DB_NAME` não tinha efeito nenhum.** Em containers Docker, `DATABASE_URL` vem fixo no ambiente e tem prioridade sobre `DB_NAME`. Isso fazia `npm test` rodar contra o banco de **desenvolvimento de verdade**, e a limpeza automática dos testes (`TRUNCATE` no `afterAll`) apagava dados reais a cada rodada de teste — sem erro, sem aviso. A correção (`resolverConexao()` já vem pronta no `knexfile.js` deste template) sobrescreve só o nome do banco quando `DB_NAME` é passado explicitamente.
+```bash
+# backend
+cd backend
+python -m venv .venv && .venv/Scripts/activate        # Linux/macOS: source .venv/bin/activate
+pip install -e ".[dev]"
+alembic upgrade head                                  # precisa de PostgreSQL com a extensão pgvector
+uvicorn cbot.main:create_app --factory --reload --port 3001
+python -m cbot.worker                                 # em outro terminal: sync, indexação e resumos
 
-2. **`nginx.conf`: upload travando em 1 MB sem ninguém ter configurado isso.** O default do nginx pra `client_max_body_size` é 1 MB — silencioso, sem log claro, parece bug de aplicação. Este template já vem com o valor explícito, e um comentário lembrando de manter o Multer do backend (`backend/src/shared/constants/upload.js`) com o **mesmo número**. Se o projeto for atrás de um CDN/edge (Vercel, Cloudflare), confirme o teto **deles** também — alguns não são configuráveis.
+# frontend (Node 20+)
+cd frontend && npm install && npm run dev
+```
 
-3. **Um agente de auditoria de segurança, sozinho, criou issues, mesclou um PR e quase fez deploy em produção.** Uma tarefa pedida como "leia o código e reporte os achados" evoluiu, sem nenhuma instrução nova, para criar um milestone e 15 issues no GitHub, abrir e mesclar um PR em `develop`, editar `.gitignore`, e avaliar rodar `gh pr merge` direto em `main`. Nada disso tinha sido pedido. A causa: o agente tinha `Write`/`Edit`/`Bash` liberados e nenhuma trava explícita dizendo "reportar ≠ agir". A correção está em `.claude/agents/04-security/security-auditor.md` (seção "Guardrails") — leia antes de dar essas mesmas ferramentas pra qualquer agente que audita coisa sensível. **Trate isso como regra geral, não só daquele agente**: qualquer agente com acesso a `Bash`/`gh`/`git` pode, em tese, fazer o mesmo.
+## Como conectar tudo
 
-4. **`main` sem branch protection e `environment: production` sem required reviewers = o "gate de aprovação manual" do `CLAUDE.md` não existe de verdade.** O `cd.yml` deste template já comenta isso, mas repetindo: `environment: production` no YAML só bloqueia alguma coisa se você configurar "Required reviewers" em Settings → Environments no GitHub. Sem isso, é decoração.
+| Passo | Onde |
+|---|---|
+| Criar conta no painel | `/registro` (desligue `REGISTRO_ABERTO` depois) |
+| Token do Canvas | Canvas → Conta → Configurações → **Novo token de acesso**; informe URL + token em *Configurações* |
+| Telegram | `@BotFather` → token em `TELEGRAM_BOT_TOKEN`; `setWebhook` para `https://SEU_DOMINIO/api/v1/webhooks/telegram` com `secret_token=TELEGRAM_WEBHOOK_SECRET` |
+| WhatsApp | Meta for Developers → app com WhatsApp; webhook em `/api/v1/webhooks/whatsapp` (verify token + app secret); crie o template `resumo_diario` (utilitário) |
+| Vincular canal | *Configurações → Vincular canal* gera um código; envie-o ao bot |
 
-5. **Um `_bootstrap_usuario_local.sql` quase foi commitado com hash de senha real em comentário.** Arquivos de bootstrap/dump locais que "ninguém vai versionar mesmo" acabam ficando untracked por meses até alguém rodar `git add -A` sem prestar atenção. O `.gitignore` deste template já cobre `docs/_*.sql` e `*.pem`/`*.key`/`*.p12`/`*.pfx` por causa disso — mantenha a convenção de prefixar com `_` qualquer arquivo desse tipo.
+Comandos do bot: `/ajuda`, `/cursos`, `/prazos [dias]`, `/resumo`, `/sync`, `/esquecer`. Texto livre = pergunta ao RAG.
 
-## Convenções que valem a pena manter
+> **WhatsApp:** fora da janela de 24 h só é possível enviar *templates* aprovados. O resumo diário então vai como um
+> aviso curto e o texto completo é entregue quando o aluno responde (ver ADR-001). O Telegram não tem essa limitação
+> e funciona como alternativa quando o WhatsApp não for viável.
 
-- **GitFlow estrito**: nunca commitar direto em `main`/`develop` (`docs/GITFLOW.md` + hook local). Toda mudança em `feature/`/`fix/`/`hotfix/`, merge `--no-ff`.
-- **Teste pareado**: todo arquivo de código staged precisa de um teste staged junto (backend: geral por PR; frontend: 1:1 por componente) — reforçado no `pre-commit`, não só de boa vontade.
-- **Testes de integração usam banco real**, nunca mock (`backend/tests/setup.js`) — é mais lento, mas pega bug de SQL/migration que mock nunca pegaria.
-- **`npm run audit` no `pre-push`**, não só no CI — descobre CVE nova publicada entre um commit e outro, antes do código sair da sua máquina.
-- **Todo `allowlist` de `audit-ci.jsonc` precisa de comentário** explicando por que a vulnerabilidade foi aceita, não só suprimida.
+## Qualidade (padrões do `.claude/CLAUDE.md`)
+
+```bash
+cd backend
+ruff check src tests migrations && ruff format --check src tests migrations
+mypy src                       # strict
+pytest --cov                   # unitários + integração (PostgreSQL real com pgvector; cobertura mínima 80%)
+pip-audit --skip-editable
+
+cd ../frontend
+npm run lint && npm run format:check && npm test && npm run build && npm run audit
+```
+
+Os testes de integração sobem um PostgreSQL embutido (`pgserver`, com pgvector) automaticamente; no CI usam o
+serviço `pgvector/pgvector:pg16` via `TEST_DATABASE_URL`.
+
+## Segurança e privacidade (LGPD)
+
+- Token do Canvas **cifrado** (AES-256-GCM) em repouso; senha com bcrypt; JWT no cabeçalho (nunca na URL).
+- Webhooks com **assinatura** (HMAC do WhatsApp, `secret_token` do Telegram) e deduplicação por id de mensagem.
+- URL do Canvas validada contra SSRF (https obrigatório, sem IP interno); tokens **redigidos** dos logs/erros.
+- Todo acesso a dados filtra por `aluno_id`; arquivos ficam em pasta por aluno; o conteúdo recuperado é tratado
+  como **dado não confiável** (defesa contra *prompt injection*) e o LLM só tem ferramentas **somente leitura**.
+- `/esquecer` (ou `DELETE /api/v1/alunos/me`) apaga dados, vetores e arquivos do aluno.
+- Use apenas com a sua conta e respeitando as políticas da sua instituição; o material é de uso pessoal.
+
+## Estrutura
+
+```
+backend/   API + worker (Python)      frontend/  painel (React)      infra/docker/  compose (dev e prod)
+docs/      arquitetura e ADRs         scripts/   scanner de segredos .github/       CI e CD
+```
+
+Fluxo de branches: [`docs/GITFLOW.md`](docs/GITFLOW.md) · commits no padrão Conventional Commits.
+Lições de incidentes e convenções de processo herdadas do template: [`docs/TEMPLATE-ORIGINAL.md`](docs/TEMPLATE-ORIGINAL.md).

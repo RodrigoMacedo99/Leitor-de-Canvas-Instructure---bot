@@ -1,6 +1,7 @@
 services:
   db:
-    image: postgres:16-alpine
+    # pgvector: busca vetorial do RAG roda no próprio PostgreSQL (ADR-002).
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-app}
@@ -19,12 +20,13 @@ services:
       context: ../../backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Aplica as migrations e sobe a API. O worker só inicia depois que a API está saudável.
+    command: sh -c "alembic upgrade head && uvicorn cbot.main:create_app --factory --host 0.0.0.0 --port 3001"
+    env_file: ../../.env
     environment:
-      NODE_ENV: production
-      PORT: 3001
+      APP_ENV: production
       DATABASE_URL: postgresql://${DB_USER:-app}:${DB_PASSWORD:-app_secret}@db:5432/${DB_NAME:-app}
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      STORAGE_DIR: /data/arquivos
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
     ports:
       - "3001:3001"
@@ -32,13 +34,34 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - uploads:/app/uploads
+      - arquivos:/data/arquivos
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/health || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:3001/health', timeout=4)\""]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      retries: 6
+      start_period: 20s
+
+  # Mesmo código da API, outro processo: agenda sincronizações com o Canvas, indexa e envia resumos.
+  worker:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: python -m cbot.worker
+    env_file: ../../.env
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://${DB_USER:-app}:${DB_PASSWORD:-app_secret}@db:5432/${DB_NAME:-app}
+      STORAGE_DIR: /data/arquivos
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - arquivos:/data/arquivos
 
   frontend:
     build:
@@ -53,4 +76,4 @@ services:
 
 volumes:
   pgdata:
-  uploads:
+  arquivos:
