@@ -12,6 +12,9 @@ backend/coverage/
 *.p12
 *.pfx
 
+# Dados baixados do Canvas (conteúdo de cursos e arquivos de alunos/professores)
+canvas-data/
+
 # Uploads locais (o volume Docker já persiste isso fora do git)
 backend/uploads/*
 !backend/uploads/.gitkeep

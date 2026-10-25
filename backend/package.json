@@ -8,6 +8,7 @@
     "migrate": "knex migrate:latest --knexfile src/db/knexfile.js",
     "migrate:rollback": "knex migrate:rollback --knexfile src/db/knexfile.js",
     "seed": "knex seed:run --knexfile src/db/knexfile.js",
+    "canvas:sync": "node src/integrations/canvas/cli.js",
     "test": "cross-env DB_NAME=app_test jest --runInBand --forceExit",
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",
