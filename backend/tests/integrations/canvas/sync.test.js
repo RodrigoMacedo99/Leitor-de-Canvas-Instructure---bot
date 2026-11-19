@@ -64,7 +64,12 @@ describe('syncAllCourses', () => {
   });
 
   it('baixa os arquivos do curso com o id no nome e pula os já baixados com o mesmo tamanho', async () => {
-    const file = { id: 99, filename: 'slides.pdf', size: 'conteudo'.length };
+    const file = {
+      id: 99,
+      filename: 'slides.pdf',
+      size: 'conteudo'.length,
+      url: 'https://files/99',
+    };
     const client = fakeClient({ lists: { '/files': [file] } });
     const fetchImpl = fakeFetch('conteudo');
 
@@ -88,6 +93,32 @@ describe('syncAllCourses', () => {
     const report = await readJson(path.join(dir, 'sincronizacao.json'));
     expect(report.erros).toEqual([expect.objectContaining({ recurso: 'quizzes', status: 403 })]);
     expect(await readJson(path.join(dir, 'assignments.json'))).toEqual([{ id: 1 }]);
+  });
+
+  it('registra recurso desativado no curso (404) como aviso, não como erro', async () => {
+    const client = fakeClient({
+      failures: { '/quizzes': new CanvasApiError(404, '/quizzes') },
+    });
+
+    await syncAllCourses(client, outputDir, { fetchImpl: fakeFetch() });
+
+    const report = await readJson(path.join(outputDir, COURSE_DIR, 'sincronizacao.json'));
+    expect(report.erros).toEqual([]);
+    expect(report.desativados).toEqual(['quizzes']);
+  });
+
+  it('pula arquivos sem URL ou bloqueados para o usuário, sem registrar erro', async () => {
+    const blocked = { id: 1, filename: 'a.pdf', size: 3, url: '', locked_for_user: true };
+    const noUrl = { id: 2, filename: 'b.pdf', size: 3, url: '' };
+    const client = fakeClient({ lists: { '/files': [blocked, noUrl] } });
+    const fetchImpl = fakeFetch();
+
+    await syncAllCourses(client, outputDir, { fetchImpl });
+
+    const report = await readJson(path.join(outputDir, COURSE_DIR, 'sincronizacao.json'));
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(report.erros).toEqual([]);
+    expect(report.arquivos).toEqual({ baixados: 0, ignorados: 0, falhas: 0, bloqueados: 2 });
   });
 
   it('aborta a sincronização inteira quando o token é rejeitado (401)', async () => {

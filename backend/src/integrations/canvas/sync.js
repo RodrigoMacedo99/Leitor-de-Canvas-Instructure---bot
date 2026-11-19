@@ -5,14 +5,20 @@ const { COURSE_RESOURCES, pageBodyPath } = require('./resources');
 const { SYNC_REPORT_FILE } = require('./constants');
 
 const AUTH_FAILURE_STATUS = 401;
+const NOT_FOUND_STATUS = 404;
 
 // Um recurso indisponível (aba desativada, 403, 404) não deve derrubar o
 // curso inteiro. Token rejeitado é diferente: aí não adianta continuar.
+// 404 costuma ser aba desativada pelo professor, não falha de sincronização.
 async function attempt(name, load, report) {
   try {
     return await load();
   } catch (error) {
     if (error.status === AUTH_FAILURE_STATUS) throw error;
+    if (error.status === NOT_FOUND_STATUS) {
+      report.desativados.push(name);
+      return undefined;
+    }
     report.erros.push({ recurso: name, status: error.status, mensagem: error.message });
     return undefined;
   }
@@ -42,9 +48,18 @@ async function savePageBodies(client, base, courseDir, pages, report) {
   }
 }
 
+// Arquivo de módulo não publicado chega sem URL e com locked_for_user: não há o que baixar.
+function isDownloadable(file) {
+  return Boolean(file.url) && !file.locked_for_user;
+}
+
 async function downloadCourseFiles(courseDir, files, fetchImpl, report) {
-  const counts = { baixados: 0, ignorados: 0, falhas: 0 };
+  const counts = { baixados: 0, ignorados: 0, falhas: 0, bloqueados: 0 };
   for (const file of files) {
+    if (!isDownloadable(file)) {
+      counts.bloqueados += 1;
+      continue;
+    }
     const destPath = path.join(courseDir, 'arquivos', `${file.id}-${safeSegment(file.filename)}`);
     const outcome = await attempt(
       `arquivo:${file.id}`,
@@ -61,7 +76,7 @@ async function downloadCourseFiles(courseDir, files, fetchImpl, report) {
 async function syncCourse(client, course, outputDir, fetchImpl) {
   const courseDir = path.join(outputDir, courseDirName(course));
   const base = `/courses/${course.id}`;
-  const report = { curso: course.name, erros: [], arquivos: {} };
+  const report = { curso: course.name, erros: [], desativados: [], arquivos: {} };
 
   await writeJson(courseDir, 'curso.json', course);
   const loaded = await saveResources(client, base, courseDir, report);
